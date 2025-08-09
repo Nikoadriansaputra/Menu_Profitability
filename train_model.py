@@ -11,12 +11,13 @@ from sklearn.metrics import accuracy_score
 # =======================
 df = pd.read_csv("restaurant_menu_optimization_data.csv")
 
-# Encode target variable
+# Encode target variable (Low=0, Medium=1, High=2)
 le = LabelEncoder()
 df['Profitability'] = le.fit_transform(df['Profitability'])
 
-# One-hot encode categorical columns
-df = pd.get_dummies(df, columns=['RestaurantID', 'MenuCategory'], drop_first=True)
+# Convert RestaurantID and MenuCategory into numeric factors
+df['RestaurantID'] = df['RestaurantID'].astype('category').cat.codes + 1
+df['MenuCategory'] = df['MenuCategory'].astype('category').cat.codes + 1
 
 # Drop non-useful columns
 df.drop(['Ingredients', 'MenuItem'], axis=1, inplace=True)
