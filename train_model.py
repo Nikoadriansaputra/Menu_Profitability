@@ -1,79 +1,88 @@
 # train_model.py
 import pandas as pd
 import pickle
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import classification_report
 
-# =======================
+# ============================
 # 1. Load & Prepare Data
-# =======================
+# ============================
 df = pd.read_csv("restaurant_menu_optimization_data.csv")
 
-# Encode target variable (Low=0, Medium=1, High=2)
-le = LabelEncoder()
-df['Profitability'] = le.fit_transform(df['Profitability'])
+# Map target labels
+profit_map = {'Low': 0, 'Medium': 1, 'High': 2}
+reverse_profit_map = {v: k for k, v in profit_map.items()}
+df['Profitability'] = df['Profitability'].map(profit_map)
 
-# Convert RestaurantID and MenuCategory into numeric factors
-df['RestaurantID'] = df['RestaurantID'].astype('category').cat.codes + 1
-df['MenuCategory'] = df['MenuCategory'].astype('category').cat.codes + 1
+# Store category mappings for factorization
+restaurant_map = {cat: i+1 for i, cat in enumerate(df['RestaurantID'].unique())}
+category_map = {cat: i+1 for i, cat in enumerate(df['MenuCategory'].unique())}
 
-# Drop non-useful columns
-df.drop(['Ingredients', 'MenuItem'], axis=1, inplace=True)
+# Factorize
+df['RestaurantID'] = df['RestaurantID'].map(restaurant_map)
+df['MenuCategory'] = df['MenuCategory'].map(category_map)
 
-# Separate features & target
-X = df.drop('Profitability', axis=1)
+# Features and target
+X = df[['Price', 'RestaurantID', 'MenuCategory']]
 y = df['Profitability']
 
 # Train-test split
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+    X, y, test_size=0.2, random_state=42
 )
 
-# Feature scaling
+# Scale features
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
-# =======================
-# 2. Hyperparameter Tuning
-# =======================
-best_acc = 0
-best_params = {}
+# Parameter grid for KNN tuning
+param_grid = {
+    'n_neighbors': range(1, 51),
+    'weights': ['uniform', 'distance'],
+    'metric': ['euclidean', 'manhattan', 'minkowski', 'chebyshev'],
+    'p': [1, 2],
+    'leaf_size': [10, 20, 30, 40, 50],
+    'algorithm': ['auto', 'ball_tree', 'kd_tree', 'brute']
+}
 
-for metric in ['euclidean', 'manhattan', 'minkowski']:
-    for weights in ['uniform', 'distance']:
-        for k in range(1, 51):
-            knn = KNeighborsClassifier(n_neighbors=k, metric=metric, weights=weights)
-            knn.fit(X_train_scaled, y_train)
-            y_pred = knn.predict(X_test_scaled)
-            acc = accuracy_score(y_test, y_pred)
-
-            if acc > best_acc:
-                best_acc = acc
-                best_params = {'k': k, 'metric': metric, 'weights': weights}
-
-# =======================
-# 3. Train Final Model
-# =======================
-final_knn = KNeighborsClassifier(
-    n_neighbors=best_params['k'],
-    metric=best_params['metric'],
-    weights=best_params['weights']
+grid = GridSearchCV(
+    KNeighborsClassifier(),
+    param_grid,
+    cv=10,
+    scoring='accuracy',
+    n_jobs=-1,
+    verbose=2
 )
-final_knn.fit(X_train_scaled, y_train)
+grid.fit(X_train_scaled, y_train)
 
-# =======================
-# 4. Save Model & Objects
-# =======================
+# Best model
+knn = grid.best_estimator_
+best_params = grid.best_params_
+best_acc = grid.best_score_
+clf_report = classification_report(y_test, knn.predict(X_test_scaled))
+
+# Save model & artifacts
 with open("knn_model.pkl", "wb") as f:
-    pickle.dump(final_knn, f)
-
+    pickle.dump(knn, f)
 with open("scaler.pkl", "wb") as f:
     pickle.dump(scaler, f)
+with open("mappings.pkl", "wb") as f:
+    pickle.dump({
+        "profit_map": profit_map,
+        "reverse_profit_map": reverse_profit_map,
+        "restaurant_map": restaurant_map,
+        "category_map": category_map
+    }, f)
+with open("model_info.pkl", "wb") as f:
+    pickle.dump({
+        "best_params": best_params,
+        "best_acc": best_acc,
+        "clf_report": clf_report
+    }, f)
 
-with open("label_encoder.pkl", "wb") as f:
-    pickle.dump(le, f)
-
-print(f"✅ Model trained and saved! Best Params: {best_params} | Accuracy: {best_acc:.4f}")
+print("✅ Model training complete!")
+print(f"Best Parameters: {best_params}")
+print(f"Best CV Accuracy: {best_acc:.2%}")
